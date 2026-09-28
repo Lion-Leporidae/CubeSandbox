@@ -27,18 +27,20 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # 填写 CUBE_TEMPLATE_ID、CUBE_API_URL、CUBE_PROXY_NODE_IP 和 LLM 配置。
+# 启用认证的远程 CUBE_API_URL 必须使用 HTTPS。
 python agno_agent_demo.py --sandbox-only
 python agno_agent_demo.py
 ```
 
 `--sandbox-only` 不调用 LLM，只在 MicroVM 内运行一个确定性的 Python 计算，用来验证沙箱执行链路。
-默认运行则要求 Agno Agent 调用同一个工具。
+默认运行则要求 Agno Agent 调用同一个工具。两种模式默认均拒绝公网出站；只有生成的代码确有需要且
+部署策略允许时，才传入 `--allow-internet`。
 
 ## 安全注意事项
 
-- 应把模型生成的代码视为不可信输入。示例将单次工具输入限制为 16 KiB、命令超时限制为 120 秒，但
-  这不能替代集群级别的网络与资源策略。
-- 不需要出网时，保持 `allow_internet_access=False`；确有需要时，只为必要目标添加收窄的 CubeSandbox
-  网络策略。
+- 应把模型生成的代码视为不可信输入。示例将单次工具输入限制为 16 KiB、命令超时限制为 120 秒、
+  返回输出限制为 64 KiB，但这不能替代集群级别的网络与资源策略。
+- 示例默认传入 `allow_internet_access=False`。确有需要时，只有配合收窄的 CubeSandbox 网络策略才使用
+  `--allow-internet`。
 - 只有 Agent 必须跨运行保留状态时才挂载持久 Volume；否则上下文管理器的清理行为会使每次运行拥有
   独立的工作目录。

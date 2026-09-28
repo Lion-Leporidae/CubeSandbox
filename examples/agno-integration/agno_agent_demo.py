@@ -5,15 +5,14 @@ from __future__ import annotations
 import argparse
 import itertools
 import os
-import sys
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from cubesandbox import Sandbox
 from dotenv import load_dotenv
 
-
 MAX_CODE_BYTES = 16 * 1024
+MAX_OUTPUT_BYTES = 64 * 1024
 
 
 def require_env(*names: str) -> None:
@@ -33,7 +32,15 @@ def format_result(result: object) -> str:
         output += "\n--- stderr ---\n" + stderr
     if exit_code:
         output += f"\n[non-zero exit code: {exit_code}]"
-    return output or "[command completed without output]"
+    if not output:
+        return "[command completed without output]"
+    encoded_output = output.encode("utf-8")
+    if len(encoded_output) <= MAX_OUTPUT_BYTES:
+        return output
+    return (
+        encoded_output[:MAX_OUTPUT_BYTES].decode("utf-8", errors="ignore")
+        + f"\n[output truncated after {MAX_OUTPUT_BYTES} bytes]"
+    )
 
 
 def make_run_python(sandbox: Sandbox):
@@ -55,10 +62,13 @@ def make_run_python(sandbox: Sandbox):
             return f"Error: code exceeds the {MAX_CODE_BYTES}-byte limit."
 
         script = f"/workspace/_agno_agent_{next(script_counter)}.py"
-        sandbox.files.write(script, code)
-        result = sandbox.commands.run(
-            f"python3 {script}", timeout=120, cwd="/workspace"
-        )
+        try:
+            sandbox.files.write(script, code)
+            result = sandbox.commands.run(
+                f"python3 {script}", timeout=120, cwd="/workspace"
+            )
+        except Exception as exc:  # noqa: BLE001 - tool faults must be returned to the Agent.
+            return f"Error: sandbox execution failed: {type(exc).__name__}: {exc}"
         return format_result(result)
 
     return run_python
@@ -77,14 +87,25 @@ def main() -> None:
         "Explain the result concisely.",
         help="Task for the Agno Agent.",
     )
+    parser.add_argument(
+        "--allow-internet",
+        action="store_true",
+        help="Allow sandbox code to access the public internet (disabled by default).",
+    )
     args = parser.parse_args()
 
     load_dotenv()
     require_env("CUBE_TEMPLATE_ID")
+    if not args.sandbox_only:
+        require_env("OPENAI_API_KEY")
 
     # A single MicroVM is reused for every tool call in this Agent run. Leaving
     # the block destroys it, including when the model or tool call fails.
-    with Sandbox.create(template=os.environ["CUBE_TEMPLATE_ID"], timeout=600) as sandbox:
+    with Sandbox.create(
+        template=os.environ["CUBE_TEMPLATE_ID"],
+        timeout=600,
+        allow_internet_access=args.allow_internet,
+    ) as sandbox:
         print(f"Sandbox {sandbox.sandbox_id} created.")
         run_python = make_run_python(sandbox)
 
@@ -92,7 +113,6 @@ def main() -> None:
             print(run_python("print(sum(i * i for i in range(1, 11)))"))
             return
 
-        require_env("OPENAI_API_KEY")
         model = OpenAIChat(
             id=os.getenv("AGNO_MODEL", "gpt-4o-mini"),
             api_key=os.environ["OPENAI_API_KEY"],

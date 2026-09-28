@@ -59,13 +59,18 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# Fill CUBE_TEMPLATE_ID with the ID returned by template creation, then complete
+# the remaining CubeSandbox and LLM settings. An authenticated remote
+# CUBE_API_URL must use HTTPS.
 python agno_agent_demo.py --sandbox-only
 python agno_agent_demo.py
 ```
 
 `--sandbox-only` validates the Cube execution path with a deterministic Python
 calculation and does not call an LLM. The ordinary run asks the Agent to call
-the same tool.
+the same tool. Both deny public internet egress by default; pass
+`--allow-internet` only when generated code needs it and deployment policy
+permits it.
 
 ## Integration pattern
 
@@ -74,11 +79,17 @@ one already-created sandbox so all Agent tool calls reuse one MicroVM, while the
 context manager performs lifecycle cleanup:
 
 ```python
+import os
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from cubesandbox import Sandbox
 
-with Sandbox.create(template=os.environ["CUBE_TEMPLATE_ID"], timeout=600) as sandbox:
+with Sandbox.create(
+    template=os.environ["CUBE_TEMPLATE_ID"],
+    timeout=600,
+    allow_internet_access=False,
+) as sandbox:
     run_python = make_run_python(sandbox)
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini", api_key=os.environ["OPENAI_API_KEY"]),
@@ -91,15 +102,17 @@ with Sandbox.create(template=os.environ["CUBE_TEMPLATE_ID"], timeout=600) as san
 `make_run_python` in the runnable example writes each snippet to a unique path,
 executes `python3` with a command timeout, and returns stdout, stderr, and a
 non-zero exit code distinctly. It never evaluates the `code` argument on the
-host.
+host. `Sandbox.create(timeout=600)` is the sandbox idle timeout; the sample
+limits each command to 120 seconds and returns at most 64 KiB of output.
 
 ## Production controls
 
-- **Network:** for code that needs no network, create the sandbox with
-  `allow_internet_access=False`. For required egress, use a narrow native
-  CubeSandbox allow rule rather than placing an LLM key in the MicroVM.
-- **Timeout and size:** the sample limits a command to 120 seconds and an input
-  snippet to 16 KiB. Set stricter limits for your workload and platform policy.
+- **Network:** the sample defaults to `allow_internet_access=False`. For
+  required egress, use `--allow-internet` only with a narrow native CubeSandbox
+  allow rule rather than placing an LLM key in the MicroVM.
+- **Timeout and size:** the sample limits a command to 120 seconds, an input
+  snippet to 16 KiB, and returned output to 64 KiB. Set stricter limits for your
+  workload and platform policy.
 - **Persistent state:** use `Volume.create(...)` and
   `volume_mounts={"/workspace": volume}` only when Agent state must survive a
   run; otherwise a fresh sandbox limits cross-task state leakage.

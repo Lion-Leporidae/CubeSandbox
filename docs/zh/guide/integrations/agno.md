@@ -56,12 +56,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# 将创建模板时返回的 ID 填入 CUBE_TEMPLATE_ID，再完成其余 CubeSandbox 与 LLM 配置。
+# 启用认证的远程 CUBE_API_URL 必须使用 HTTPS。
 python agno_agent_demo.py --sandbox-only
 python agno_agent_demo.py
 ```
 
 `--sandbox-only` 使用确定性的 Python 计算验证 Cube 执行链路，不调用 LLM；普通运行则让
-Agent 调用同一个工具。
+Agent 调用同一个工具。两种模式默认均拒绝公网出站；只有生成的代码确有需要且部署策略允许时，才传入
+`--allow-internet`。
 
 ## 集成模式
 
@@ -69,11 +72,17 @@ Agno 接受 `Agent(tools=[...])` 中的 Python 函数。将函数绑定到已创
 Agent 运行的多次工具调用复用同一个 MicroVM；上下文管理器负责生命周期清理：
 
 ```python
+import os
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from cubesandbox import Sandbox
 
-with Sandbox.create(template=os.environ["CUBE_TEMPLATE_ID"], timeout=600) as sandbox:
+with Sandbox.create(
+    template=os.environ["CUBE_TEMPLATE_ID"],
+    timeout=600,
+    allow_internet_access=False,
+) as sandbox:
     run_python = make_run_python(sandbox)
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini", api_key=os.environ["OPENAI_API_KEY"]),
@@ -85,13 +94,14 @@ with Sandbox.create(template=os.environ["CUBE_TEMPLATE_ID"], timeout=600) as san
 
 可运行示例中的 `make_run_python` 会为每段代码分配独立路径，以命令超时执行 `python3`，并将
 stdout、stderr 与非零退出码明确返回给模型；它不会在宿主机解释 `code` 参数。
+`Sandbox.create(timeout=600)` 是沙箱的空闲超时；示例将单次命令限制为 120 秒，并且最多返回 64 KiB 输出。
 
 ## 生产控制点
 
-- **网络：** 代码不需要联网时，使用 `allow_internet_access=False` 创建沙箱；确需出网时，
-  使用收窄的原生 CubeSandbox 规则，而不是将 LLM 密钥放入 MicroVM。
-- **超时与大小：** 示例限制单个命令为 120 秒、代码输入为 16 KiB。请按业务与平台策略进一步
-  收紧。
+- **网络：** 示例默认传入 `allow_internet_access=False`。确需出网时，只有配合收窄的原生
+  CubeSandbox 规则才使用 `--allow-internet`，而不是将 LLM 密钥放入 MicroVM。
+- **超时与大小：** 示例限制单个命令为 120 秒、代码输入为 16 KiB、返回输出为 64 KiB。请按业务与
+  平台策略进一步收紧。
 - **持久状态：** 仅在 Agent 状态必须跨运行保留时，才使用 `Volume.create(...)` 与
   `volume_mounts={"/workspace": volume}`；否则新建沙箱可降低任务间状态泄漏。
 - **清理：** 将 `Sandbox.create(...)` 保持在 `with` 块内。需要保存会话时，应显式使用

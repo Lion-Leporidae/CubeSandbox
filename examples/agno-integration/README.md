@@ -29,19 +29,22 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Fill CUBE_TEMPLATE_ID, CUBE_API_URL, CUBE_PROXY_NODE_IP, and LLM settings.
+# An authenticated remote CUBE_API_URL must use HTTPS.
 python agno_agent_demo.py --sandbox-only
 python agno_agent_demo.py
 ```
 
 `--sandbox-only` runs a deterministic Python calculation in the MicroVM without
 calling an LLM. The default run asks the Agno Agent to invoke the same tool.
+Both modes deny public internet egress by default; pass `--allow-internet` only
+when the generated code requires it and your deployment policy permits it.
 
 ## Safety notes
 
 - Treat all generated code as untrusted. This example bounds each tool input to
-  16 KiB and each command to 120 seconds, but those are not a replacement for
-  cluster policy.
-- Keep `allow_internet_access=False` for code that does not need egress. Add a
-  narrow CubeSandbox network policy only for required destinations.
+  16 KiB, each command to 120 seconds, and returned output to 64 KiB, but those
+  are not a replacement for cluster policy.
+- The demo passes `allow_internet_access=False` by default. For required egress,
+  use `--allow-internet` only with a narrow CubeSandbox network policy.
 - Use a persistent Cube volume only when an Agent needs state across runs;
   otherwise the context-manager cleanup gives each Agent run a fresh workspace.
